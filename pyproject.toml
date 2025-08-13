@@ -1,0 +1,15 @@
+# pyproject.toml  (project root)
+
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nnfs-local"
+version = "0.1.0"
+description = "From-scratch NN utilities for the heart-disease project"
+requires-python = ">=3.9"
+
+[tool.setuptools]
+package-dir = {"" = "src"}     # say: modules live under src/
+py-modules = ["nn_from_scratch"]  # expose src/nn_from_scratch.py as top-level module
