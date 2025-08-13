@@ -1,3 +1,31 @@
+"""
+From-scratch neural network components, preprocessing, training loop,
+metrics, and lightweight explainability helpers.
+
+This module intentionally avoids external ML frameworks to keep every step
+transparent for learning and auditing. It includes:
+
+- Data utilities:
+    * `train_val_test_split`: random split with fixed ratios.
+    * Minimal preprocessors: `TargetEncoder`, `StandardScaler`, `MinMaxScaler`.
+
+- Core NN building blocks:
+    * `DenseLayer`, `ReLU`, `Sigmoid`, `Dropout`.
+
+- Loss & metrics:
+    * Binary cross-entropy (BCE) and its gradient.
+    * Accuracy/Precision/Recall/MCC, ROC-AUC, PR-AUC, F1/Youden utilities.
+
+- Optimizers & training:
+    * `AdamOptimizer`, `AdamWOptimizer`, gradient clipping.
+    * `ReduceLROnPlateau`, `EarlyStopping`, and `train_model`.
+
+- Explainability (NumPy-based):
+    * Permutation importance (MCC drop).
+    * Partial dependence (PDP) for 1D feature sweeps.
+    * Numerical `gradient_check` for backprop validation.
+"""
+
 import math
 import numpy as np
 import pandas as pd
@@ -13,6 +41,22 @@ def train_val_test_split(
     val_ratio: float = 0.15,
     seed: int = 42
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Shuffle and split a DataFrame into train/val/test partitions.
+
+    Args:
+        df: Input dataset.
+        train_ratio: Fraction for the training split.
+        val_ratio: Fraction for the validation split.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        (train_df, val_df, test_df) as three DataFrames whose row counts
+        respect the requested ratios (remaining rows go to the test set).
+
+    Notes:
+        - The function shuffles the rows before slicing.
+        - Ratios are applied sequentially on the shuffled data.
+    """
     np.random.seed(seed)
     shuffled_df = df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
     n_total = len(shuffled_df)
@@ -27,10 +71,19 @@ def train_val_test_split(
 
 
 class TargetEncoder:
+    """Mean target encoder for categorical columns.
+
+    Learns a mapping `category -> mean(target)` per categorical column and
+    replaces categories with their learned means.
+
+    Attributes:
+        category_map: Dict[column_name, Dict[category_value, mean_target]]
+    """
     def __init__(self) -> None:
         self.category_map: Dict[str, Dict[Any, float]] = {}
 
     def fit(self, df: pd.DataFrame, cat_cols: List[str], target_col: str) -> None:
+        """Learn per-category mean of the target for each categorical column."""
         for col in cat_cols:
             cat2mean: Dict[Any, float] = {}
             grouped = df.groupby(col)[target_col].mean()
@@ -39,6 +92,7 @@ class TargetEncoder:
             self.category_map[col] = cat2mean
 
     def transform(self, df: pd.DataFrame, cat_cols: List[str]) -> pd.DataFrame:
+        """Replace categories with learned means; unseen categories -> global mean."""
         df_enc = df.copy()
         for col in cat_cols:
             cat2mean = self.category_map[col]
@@ -47,43 +101,61 @@ class TargetEncoder:
         return df_enc
 
     def fit_transform(self, df: pd.DataFrame, cat_cols: List[str], target_col: str) -> pd.DataFrame:
+        """Convenience: fit on `df` and return transformed DataFrame."""
         self.fit(df, cat_cols, target_col)
         return self.transform(df, cat_cols)
 
 
 class StandardScaler:
+    """Column-wise standardization: (x - mean) / std.
+
+    Attributes:
+        means: Dict[column_name, float]
+        stds: Dict[column_name, float]  (replaced by 1e-8 if std == 0)
+    """
     def __init__(self) -> None:
         self.means: Dict[str, float] = {}
         self.stds: Dict[str, float] = {}
 
     def fit(self, df: pd.DataFrame, cols: List[str]) -> None:
+        """Compute per-column mean and std (with zero-std fallback)."""
         for col in cols:
             self.means[col] = float(df[col].mean())
             std_val = float(df[col].std())
             self.stds[col] = std_val if std_val != 0 else 1e-8
 
     def transform(self, df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
+        """Apply standardization to a copy of the DataFrame."""
         df_scaled = df.copy()
         for col in cols:
             df_scaled[col] = (df_scaled[col] - self.means[col]) / self.stds[col]
         return df_scaled
 
     def fit_transform(self, df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
+        """Fit and then transform."""
         self.fit(df, cols)
         return self.transform(df, cols)
 
 
 class MinMaxScaler:
+    """Column-wise min-max scaling to [0, 1].
+
+    Attributes:
+        mins: Dict[column_name, float]
+        maxs: Dict[column_name, float]
+    """
     def __init__(self) -> None:
         self.mins: Dict[str, float] = {}
         self.maxs: Dict[str, float] = {}
 
     def fit(self, df: pd.DataFrame, cols: List[str]) -> None:
+        """Compute per-column min and max."""
         for col in cols:
             self.mins[col] = float(df[col].min())
             self.maxs[col] = float(df[col].max())
 
     def transform(self, df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
+        """Apply min-max scaling; uses 1e-8 denominator for zero-range columns."""
         df_scaled = df.copy()
         for col in cols:
             mn = self.mins[col]
@@ -93,6 +165,7 @@ class MinMaxScaler:
         return df_scaled
 
     def fit_transform(self, df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
+        """Fit and then transform."""
         self.fit(df, cols)
         return self.transform(df, cols)
 
@@ -101,6 +174,15 @@ class MinMaxScaler:
 # -------------
 
 class DenseLayer:
+    """Fully-connected (affine) layer with simple moment buffers.
+
+    Uses a Glorot/Xavier-like uniform initialization with limit 1/sqrt(input_dim).
+
+    Attributes:
+        W, b: parameters
+        mW, vW, mb, vb: moment buffers (used by Adam/AdamW)
+        dW, db: gradients computed during backprop
+    """
     def __init__(self, input_dim: int, output_dim: int) -> None:
         # Xavier/Glorot uniform init (մոտ քո տարբերակին)
         limit = 1.0 / math.sqrt(input_dim)
@@ -117,9 +199,11 @@ class DenseLayer:
         self.db = None
 
     def forward(self, x: np.ndarray) -> np.ndarray:
+        """Compute affine transform: x @ W + b."""
         return x @ self.W + self.b
 
     def backward(self, x: np.ndarray, grad_output: np.ndarray) -> np.ndarray:
+        """Backprop through the affine transform; returns dL/dx."""
         batch_size = x.shape[0]
         self.dW = (x.T @ grad_output) / max(batch_size, 1)
         self.db = grad_output.mean(axis=0, keepdims=True)
@@ -128,28 +212,34 @@ class DenseLayer:
 
 
 class ReLU:
+    """Rectified Linear Unit activation with saved input for backward."""
     def __init__(self) -> None:
         self.x = None
 
     def forward(self, x: np.ndarray) -> np.ndarray:
+        """Apply element-wise max(0, x)."""
         self.x = x
         return np.maximum(0, x)
 
     def backward(self, grad_output: np.ndarray) -> np.ndarray:
+        """Mask gradients where the cached input was negative."""
         grad = grad_output.copy()
         grad[self.x < 0] = 0
         return grad
 
 
 class Sigmoid:
+    """Sigmoid activation σ(x) = 1 / (1 + exp(-x))."""
     def __init__(self) -> None:
         self.out = None
 
     def forward(self, x: np.ndarray) -> np.ndarray:
+        """Cache σ(x) during forward to reuse in backward."""
         self.out = 1.0 / (1.0 + np.exp(-x))
         return self.out
 
     def backward(self, grad_output: np.ndarray) -> np.ndarray:
+        """Return grad_output * σ(x) * (1 - σ(x))."""
         return grad_output * (self.out * (1 - self.out))
 
 # ----------------------
@@ -157,7 +247,15 @@ class Sigmoid:
 # ----------------------
 
 class Dropout:
-    """Train-time dropout; evaluation-ում անջատ է."""
+    """Train-time dropout; disabled at evaluation.
+
+    Args:
+        p: Drop probability in [0, 1).
+        seed: RNG seed for reproducibility.
+
+    Notes:
+        - During training, scales activations by 1/(1-p) to keep expectations.
+    """
     def __init__(self, p: float = 0.5, seed: int = 42) -> None:
         assert 0.0 <= p < 1.0
         self.p = p
@@ -165,6 +263,7 @@ class Dropout:
         self.mask = None
 
     def forward(self, x: np.ndarray, train: bool = True) -> np.ndarray:
+        """Apply dropout mask at train-time; return x unchanged at eval-time."""
         if not train or self.p == 0.0:
             self.mask = None
             return x
@@ -172,6 +271,7 @@ class Dropout:
         return x * self.mask
 
     def backward(self, grad_output: np.ndarray) -> np.ndarray:
+        """Propagate gradients through the same mask."""
         if self.mask is None:
             return grad_output
         return grad_output * self.mask
@@ -181,16 +281,19 @@ class Dropout:
 # -------------
 
 def bce_loss(pred: np.ndarray, target: np.ndarray, eps: float = 1e-8) -> float:
+    """Binary cross-entropy loss with epsilon clamping for stability."""
     pred_clamped = np.clip(pred, eps, 1 - eps)
     return -np.mean(
         target * np.log(pred_clamped) + (1 - target) * np.log(1 - pred_clamped)
     )
 
 def bce_loss_grad(pred: np.ndarray, target: np.ndarray, eps: float = 1e-8) -> np.ndarray:
+    """Analytical gradient of BCE w.r.t. predictions (sigmoid outputs)."""
     pred_clamped = np.clip(pred, eps, 1 - eps)
     return (pred_clamped - target) / (pred_clamped * (1 - pred_clamped) + eps)
 
 def compute_metrics(pred: np.ndarray, target: np.ndarray, threshold: float = 0.5) -> Dict[str, float]:
+    """Compute accuracy/precision/recall/MCC at a fixed probability threshold."""
     pred_binary = (pred >= threshold).astype(int)
     tp = np.sum((pred_binary == 1) & (target == 1))
     tn = np.sum((pred_binary == 0) & (target == 0))
@@ -217,6 +320,7 @@ def compute_metrics(pred: np.ndarray, target: np.ndarray, threshold: float = 0.5
 # ----------------------
 
 def _binary_clf_curve(y_true: np.ndarray, y_score: np.ndarray):
+    """Construct cumulative FP/TP vs descending thresholds (internal helper)."""
     order = np.argsort(-y_score)  # descending
     y_true = y_true.astype(int).ravel()[order]
     y_score = y_score.ravel()[order]
@@ -228,6 +332,7 @@ def _binary_clf_curve(y_true: np.ndarray, y_score: np.ndarray):
     return fps, tps, thresholds
 
 def roc_auc_score(y_true: np.ndarray, y_score: np.ndarray) -> float:
+    """Compute ROC-AUC via trapezoidal rule (FPR vs TPR)."""
     fps, tps, _ = _binary_clf_curve(y_true, y_score)
     fns = tps[-1] - tps
     tns = (y_true.size - tps - fps)
@@ -237,6 +342,7 @@ def roc_auc_score(y_true: np.ndarray, y_score: np.ndarray) -> float:
     return float(np.trapz(tpr[order], fpr[order]))
 
 def precision_recall_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
+    """Compute area under the Precision-Recall curve via trapezoidal rule."""
     fps, tps, _ = _binary_clf_curve(y_true, y_score)
     precision = tps / np.maximum(tps + fps, 1e-16)
     recall = tps / np.maximum(tps[-1], 1e-16)
@@ -244,6 +350,7 @@ def precision_recall_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
     return float(np.trapz(precision[order], recall[order]))
 
 def f1_score_from_proba(y_true: np.ndarray, y_score: np.ndarray, thr: float) -> float:
+    """Compute F1 score after binarizing `y_score` at threshold `thr`."""
     y_pred = (y_score >= thr).astype(int)
     tp = np.sum((y_pred == 1) & (y_true == 1))
     fp = np.sum((y_pred == 1) & (y_true == 0))
@@ -253,6 +360,7 @@ def f1_score_from_proba(y_true: np.ndarray, y_score: np.ndarray, thr: float) -> 
     return float(2 * precision * recall / max(precision + recall, 1e-16))
 
 def youden_j(y_true: np.ndarray, y_score: np.ndarray, thr: float) -> float:
+    """Compute Youden's J statistic (TPR - FPR) at threshold `thr`."""
     y_pred = (y_score >= thr).astype(int)
     tp = np.sum((y_pred == 1) & (y_true == 1))
     tn = np.sum((y_pred == 0) & (y_true == 0))
@@ -263,6 +371,11 @@ def youden_j(y_true: np.ndarray, y_score: np.ndarray, thr: float) -> float:
     return float(tpr - fpr)
 
 def tune_threshold(y_true: np.ndarray, y_score: np.ndarray, strategy: str = "f1") -> Tuple[float, float]:
+    """Grid-search threshold in [0.01, 0.99] to maximize F1 or Youden's J.
+
+    Returns:
+        (best_threshold, best_value)
+    """
     best_thr, best_val = 0.5, -1.0
     for thr in np.linspace(0.01, 0.99, 99):
         val = f1_score_from_proba(y_true, y_score, float(thr)) if strategy == "f1" else youden_j(y_true, y_score, float(thr))
@@ -275,6 +388,17 @@ def tune_threshold(y_true: np.ndarray, y_score: np.ndarray, strategy: str = "f1"
 # -----------------
 
 class NeuralNetwork:
+    """A simple 4-layer MLP for binary classification.
+
+    Architecture:
+        [Input] -> Dense(32) -> ReLU -> Dropout
+                -> Dense(64) -> ReLU -> Dropout
+                -> Dense(32) -> ReLU -> Dropout
+                -> Dense(1)  -> Sigmoid
+
+    Notes:
+        - `self.training` toggles dropout behavior (True in `forward_and_backward`).
+    """
     def __init__(self, input_dim: int, dropout_p: float = 0.15) -> None:
         self.layer1 = DenseLayer(input_dim, 32)
         self.act1 = ReLU()
@@ -295,6 +419,7 @@ class NeuralNetwork:
         self.training = False
 
     def forward(self, x: np.ndarray) -> np.ndarray:
+        """Inference pass; uses current `self.training` for dropout."""
         # use self.training to toggle dropout
         out1 = self.layer1.forward(x)
         out1a = self.act1.forward(out1)
@@ -313,6 +438,11 @@ class NeuralNetwork:
         return out4a
 
     def forward_and_backward(self, x: np.ndarray, y: np.ndarray) -> float:
+        """Training step: forward pass with dropout ON, then backprop.
+
+        Returns:
+            Scalar BCE loss value for the given batch.
+        """
         # Force training behavior (dropout ON here)
         prev_flag = self.training
         self.training = True
@@ -348,6 +478,7 @@ class NeuralNetwork:
         return loss_val
 
     def parameters(self) -> List[DenseLayer]:
+        """Return the list of trainable layers (for optimizers)."""
         return [self.layer1, self.layer2, self.layer3, self.layer4]
 
 # ---------------
@@ -355,6 +486,15 @@ class NeuralNetwork:
 # ---------------
 
 class AdamOptimizer:
+    """Classic Adam optimizer for a list of `DenseLayer` parameters.
+
+    Args:
+        params: Layers to update (must expose `W`, `b`, `dW`, `db`, `mW`, `mb`, `vW`, `vb`).
+        lr: Learning rate.
+        beta1: Exponential decay for first moment.
+        beta2: Exponential decay for second moment.
+        eps: Numerical stability term.
+    """
     def __init__(self, params: List[DenseLayer], lr: float = 1e-3, beta1: float = 0.9, beta2: float = 0.999, eps: float = 1e-8) -> None:
         self.params = params
         self.lr = lr
@@ -364,6 +504,7 @@ class AdamOptimizer:
         self.t = 0
 
     def step(self) -> None:
+        """Apply one Adam update step to all layers."""
         self.t += 1
         for layer in self.params:
             if layer.dW is None or layer.db is None:
@@ -383,7 +524,7 @@ class AdamOptimizer:
             layer.b -= self.lr * (mb_hat / (np.sqrt(vb_hat) + self.eps))
 
 class AdamWOptimizer:
-    """Adam with decoupled weight decay."""
+    """Adam with decoupled weight decay (AdamW)."""
     def __init__(self, params: List[DenseLayer], lr: float = 1e-3, beta1: float = 0.9, beta2: float = 0.999, eps: float = 1e-8, weight_decay: float = 1e-4) -> None:
         self.params = params
         self.lr = lr
@@ -394,6 +535,7 @@ class AdamWOptimizer:
         self.t = 0
 
     def step(self) -> None:
+        """Apply one AdamW update step to all layers (decoupled L2)."""
         self.t += 1
         for layer in self.params:
             if layer.dW is None or layer.db is None:
@@ -412,6 +554,7 @@ class AdamWOptimizer:
             layer.b -= self.lr * (mb_hat / (np.sqrt(vb_hat) + self.eps))
 
 def clip_gradients(params: List[DenseLayer], max_norm: float = 1.0) -> None:
+    """Global norm gradient clipping across all layers."""
     total = 0.0
     for layer in params:
         if layer.dW is not None and layer.db is not None:
@@ -429,6 +572,15 @@ def clip_gradients(params: List[DenseLayer], max_norm: float = 1.0) -> None:
 # -----------------------
 
 class ReduceLROnPlateau:
+    """Reduce learning rate when a monitored metric has stopped improving.
+
+    Args:
+        optimizer: Optimizer whose `lr` will be adjusted.
+        factor: Multiplicative factor for lr reduction.
+        patience: Number of epochs with no improvement before reducing lr.
+        min_lr: Lower bound for lr.
+        verbose: Print changes when True.
+    """
     def __init__(self, optimizer, factor: float = 0.5, patience: int = 3, min_lr: float = 1e-6, verbose: bool = True):
         self.optimizer = optimizer
         self.factor = factor
@@ -439,6 +591,7 @@ class ReduceLROnPlateau:
         self.num_bad = 0
 
     def step(self, current: float):
+        """Update lr based on the current monitored value (e.g., val_loss)."""
         if current < self.best - 1e-12:
             self.best = current
             self.num_bad = 0
@@ -451,6 +604,12 @@ class ReduceLROnPlateau:
                 self.num_bad = 0
 
 class EarlyStopping:
+    """Stop training early when the monitored metric stops improving.
+
+    Args:
+        patience: Epochs to wait for improvement.
+        min_delta: Minimum decrease to qualify as an improvement.
+    """
     def __init__(self, patience: int = 5, min_delta: float = 0.0):
         self.patience = patience
         self.min_delta = min_delta
@@ -459,6 +618,7 @@ class EarlyStopping:
         self.stop = False
 
     def step(self, current: float):
+        """Update internal counters and toggle `stop` when patience exceeded."""
         if current < self.best - self.min_delta:
             self.best = current
             self.num_bad = 0
@@ -487,6 +647,31 @@ def train_model(
     sch_patience: int = 2,
     sch_factor: float = 0.5,
 ) -> None:
+    """Train the network with mini-batch optimization and callbacks.
+
+    Workflow per epoch:
+        1) Shuffle training data and iterate mini-batches.
+        2) Forward+backward with dropout ON; clip gradients; optimizer.step().
+        3) Evaluate on validation set (loss, ROC-AUC, PR-AUC, F1-tuned threshold).
+        4) Print metrics; then scheduler/early-stopping callbacks.
+
+    Args:
+        model: Neural network instance.
+        X_train, y_train: Training arrays.
+        X_val, y_val: Validation arrays.
+        epochs: Max epochs to train.
+        batch_size: Mini-batch size.
+        lr: Base learning rate.
+        use_adamw: Whether to use AdamW instead of Adam.
+        weight_decay: L2 decay factor for AdamW.
+        grad_clip: Global norm clipping threshold (None to disable).
+        es_patience: EarlyStopping patience (in epochs).
+        sch_patience: ReduceLROnPlateau patience.
+        sch_factor: LR reduction factor.
+
+    Returns:
+        None. Progress is printed; the model is updated in-place.
+    """
     optimizer = AdamWOptimizer(model.parameters(), lr=lr, weight_decay=weight_decay) if use_adamw \
                 else AdamOptimizer(model.parameters(), lr=lr)
     scheduler = ReduceLROnPlateau(optimizer, factor=sch_factor, patience=sch_patience, min_lr=1e-6, verbose=True)
@@ -555,9 +740,7 @@ def train_model(
 # ============================================
 
 def _score_mcc(y_true: np.ndarray, y_score: np.ndarray, thr: float = 0.5) -> float:
-    """
-    Quick MCC score from probabilities and a threshold.
-    """
+    """Compute MCC after binarizing probabilities at threshold `thr`."""
     y_true = y_true.astype(int).ravel()
     y_pred = (y_score.ravel() >= thr).astype(int)
 
@@ -579,9 +762,18 @@ def permutation_importance(
     n_repeats: int = 5,
     random_seed: int = 42
 ) -> np.ndarray:
-    """
-    Permutation importance by MCC drop.
-    Returns importance array of shape (n_features,).
+    """Permutation importance via mean MCC drop over `n_repeats` shuffles.
+
+    Args:
+        model: Network exposing `forward(X) -> proba`.
+        X: 2D feature matrix.
+        y: Binary labels aligned to rows of `X`.
+        baseline_thr: Threshold for MCC computation.
+        n_repeats: Number of independent permutations per feature.
+        random_seed: RNG seed.
+
+    Returns:
+        Importance array of shape (n_features,), larger means more important.
     """
     rng = np.random.default_rng(random_seed)
 
@@ -611,9 +803,18 @@ def partial_dependence(
     grid: np.ndarray | None = None,
     grid_size: int = 20
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    PDP for a single feature.
-    Returns (grid_values, mean_predictions).
+    """Compute 1D PDP for a feature index by sweeping a value grid.
+
+    Args:
+        model: Network exposing `forward(X) -> proba`.
+        X: Input matrix used as the background.
+        feature_idx: Column index to vary.
+        grid: Optional explicit grid; if None, uses 1st..99th percentiles.
+        grid_size: Number of points if `grid` is None.
+
+    Returns:
+        (grid_values, mean_predictions) where predictions are averaged
+        over rows at each grid value.
     """
     if grid is None:
         vmin, vmax = np.percentile(X[:, feature_idx], [1, 99])
@@ -637,9 +838,20 @@ def gradient_check(
     num_checks: int = 10,
     seed: int = 0
 ) -> dict[str, float]:
-    """
-    Finite-difference gradient check on random parameter entries.
-    Returns {'max_rel_error': ..., 'mean_rel_error': ...}.
+    """Numerical gradient checking via central differences on random params.
+
+    For randomly selected entries in each parameter tensor (W and b),
+    perturb by ±eps and compare the numerical gradient with backprop.
+
+    Args:
+        model: Network exposing `forward` and `forward_and_backward`.
+        X, y: Mini-batch and labels.
+        eps: Small step for finite differences.
+        num_checks: How many entries per tensor to test.
+        seed: RNG seed for reproducibility.
+
+    Returns:
+        {'max_rel_error': float, 'mean_rel_error': float}
     """
     rng = np.random.default_rng(seed)
 
