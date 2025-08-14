@@ -163,7 +163,7 @@ Compute metrics on labeled rows.
 **Returns**
 ```json
 {
-  "threshold_used": 0.37,                    // tuned for F1
+  "threshold_used": 0.37,
   "metrics_at_default": { "accuracy": ..., "precision": ..., "recall": ..., "mcc": ... },
   "metrics_at_optimal": { "accuracy": ..., "precision": ..., "recall": ..., "mcc": ... },
   "auc_roc": 0.91,
@@ -202,7 +202,7 @@ Partial Dependence for a single feature (optionally with ICE curves).
 ```json
 {
   "feature": "age",
-  "grid": null,               // optional; auto-percentiles if not given
+  "grid": null,
   "grid_size": 20,
   "ice": false,
   "ice_count": 10,
