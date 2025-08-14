@@ -164,11 +164,12 @@ Compute metrics on labeled rows.
 ```json
 {
   "threshold_used": 0.37,
-  "metrics_at_default": { "accuracy": ..., "precision": ..., "recall": ..., "mcc": ... },
-  "metrics_at_optimal": { "accuracy": ..., "precision": ..., "recall": ..., "mcc": ... },
+  "metrics_at_default": { "accuracy": 0.91, "precision": 0.88, "recall": 0.85, "mcc": 0.73 },
+  "metrics_at_optimal": { "accuracy": 0.92, "precision": 0.90, "recall": 0.86, "mcc": 0.75 },
   "auc_roc": 0.91,
   "auc_pr": 0.88
 }
+
 ```
 
 ### `POST /explain/permutation`
