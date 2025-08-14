@@ -180,9 +180,12 @@ Permutation Feature Importance (global).
 {
   "baseline_thr": 0.5,
   "n_repeats": 5,
-  "top_k": 10,
+  "top_k": 5,
   "random_seed": 42,
-  "data": [ { "<features>", "target": 0|1 }, ... ]
+  "data": [
+    { "age": 57, "sex": 1, "cp": 0, "trestbps": 130, "chol": 250, "fbs": 0, "restecg": 1, "thalach": 140, "exang": 1, "oldpeak": 1.2, "slope": 2, "target": 1 },
+    { "age": 52, "sex": 0, "cp": 2, "trestbps": 120, "chol": 210, "fbs": 0, "restecg": 0, "thalach": 160, "exang": 0, "oldpeak": 0.4, "slope": 1, "target": 0 }
+  ]
 }
 ```
 
