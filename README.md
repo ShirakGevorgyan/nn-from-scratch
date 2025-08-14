@@ -1,144 +1,290 @@
-# Heart Disease Prediction with Neural Networks
+# Heart Disease Detector API
 
-This project involves building a neural network entirely from scratch using Python. It focuses on training the model to predict the risk of heart disease. Additionally, the project includes deploying the model through a FastAPI application and packaging the entire solution in a Docker container for easy deployment and scalability.
+A production-ready **FastAPI** service that predicts heart disease risk using a **from‑scratch NumPy neural network**, with built‑in metrics and explainability (Permutation Importance & PDP/ICE). The model and preprocessing live in portable pickle artifacts, so you can train elsewhere and serve here.
 
-### Neural Network Implementation
-As part of this project, a custom neural network was implemented entirely from scratch, without relying on external libraries.
-
-The neural network architecture includes:
-- **Input Layer**: Number of features from the dataset (11 input features).
-- **Hidden Layers**: 3 layers with 32, 64, and 32 neurons, using ReLU as the activation function.
-- **Output Layer**: Single neuron with a sigmoid activation function for binary classification (presence or absence of heart disease).
-- **Optimization**: Custom implementation of Adam Optimizer.
-- **Loss Function**: Binary Cross-Entropy Loss.
-
-### Dataset
-
-**Clinical heart disease dataset** sourced from [Kaggle](https://www.kaggle.com/code/gkhnakar/heart-disease-risk-prediction/notebook), containing 1048 records with 12 features was used for training the neural network.
-
-The dataset includes the following variables:
-
-- **age**: Age of the person in years.
-- **sex**: Gender of the individual (1 = Male, 0 = Female).
-- **cp**: Chest pain type (1 = typical angina, 2 = atypical angina, 3 = non-anginal pain, 4 = asymptomatic).
-- **trestbps**: Resting blood pressure (in mm Hg).
-- **chol**: Serum cholesterol level (in mg/dl).
-- **fbs**: Fasting blood sugar > 120 mg/dl (1 = true, 0 = false).
-- **restecg**: Resting electrocardiographic results (0 = normal, 1 = ST-T wave abnormality, 2 = probable left ventricular hypertrophy).
-- **thalach**: Maximum heart rate achieved.
-- **exang**: Exercise-induced angina (1 = yes, 0 = no).
-- **oldpeak**: ST depression induced by exercise relative to rest.
-- **slope**: Slope of the peak exercise ST segment (1 = upsloping, 2 = flat, 3 = downsloping).
-- **target**: Outcome (0 = no heart disease, 1 = heart disease).
-
-
-**Exploratory Data Analysis (EDA)** was performed to understand the dataset’s structure and distribution and analyze relationships between features and the target variable. Visualizations such as histograms, scatter plots, and count plots were used to uncover patterns and potential imbalances in the data. 
-
-### Data Preprocessing
-To prepare the dataset for training, the following preprocessing steps were applied:
-
- **Encoding**:
-   - Features such as `sex`, `cp`, `fbs`, `restecg`, `exang`, and `slope` were encoded using **Target Encoding**. 
-
- **Scaling**:
-   - Features such as `age`, `trestbps`, `chol`, and `thalach` were standardized using the **Standard Scaler**.
-   - The `oldpeak` feature was scaled using the **MinMax Scaler**.
-
-### Dataset Splitting
-
-The dataset was split into:
-- **Training Set**: 70% of the data used for training the neural network.
-- **Validation Set**: 15% of the data used to tune the model and monitor performance during training.
-- **Testing Set**: 15% of the data held out for final model evaluation.
-
-The model was initially trained and evaluated on the training and validation sets. After confirming the model's performance, the training and validation sets were combined to retrain the model. The final evaluation was done on unseen test data to check how well the model performs on new data.
-
-### Model Evaluation
-
-Given the nature of healthcare data, where false negatives (failing to identify patients with heart disease) can have severe consequences, the evaluation of the model was focused on the following metrics:
-
-1. **Recall (Sensitivity)**: Prioritized to ensure the model identifies as many positive cases (patients at risk) as possible, minimizing the chances of missed diagnoses.
-2. **Matthews Correlation Coefficient (MCC)**: MCC was used to evaluate the model’s overall performance. It considers all elements of the confusion matrix and provides a balanced evaluation.
-
+> **Disclaimer:** This project is for educational/demo purposes only and **not** for clinical use.
 
 ---
 
-## Project Structure
+## ✨ Features
+
+- **REST API** (FastAPI) for predictions and evaluation
+- **From‑scratch NN** (NumPy): Dense layers, ReLU/Sigmoid, Dropout, Adam/AdamW
+- **Metrics**: Accuracy, Precision, Recall, MCC, ROC‑AUC, PR‑AUC, threshold tuning (F1 / Youden)
+- **Explainability**:
+  - **Permutation Importance** (MCC drop)
+  - **Partial Dependence** + optional **ICE** curves
+- **Portable artifacts**: `model/model.pkl` + `model/preprocessing.pkl`
+- **Dockerized**: one simple image for quick sharing and deployment
+
+---
+
+## 🗂 Repository Structure
 
 ```
-├── data/
-│   └── heart_disease.csv              
-├── model/
-│   ├── model.pkl                      
-│   └── preprocessing.pkl              
-├── notebook/
-│   └── heart_disease_analysis.ipynb   
-├── src/
-│   ├── api.py                         
-│   └── nn_from_scratch.py 
-│   └── schemas.py                
-├── venv/                              
-├── Dockerfile                        
-├── requirements.txt                   
+.
+├─ data/heart_disease.csv                 # (sample data; not required at runtime)
+├─ notebook/heart_disease_analysis.ipynb  # notebooks (not required at runtime)
+├─ model/                                 # <mount or bake> model artifacts here
+│  ├─ model.pkl                           # trained model object
+│  └─ preprocessing.pkl                   # dict(encoders/scalers/cols...)
+├─ src/
+│  ├─ api.py                              # FastAPI app + endpoints
+│  ├─ nn_from_scratch.py                  # NN, training loop, preprocessors
+│  ├─ schemas.py                          # Pydantic request schemas
+│  └─ services/
+│     ├─ artifacts.py                     # ModelBundle loader (pickle-only)
+│     ├─ explain.py                       # Permutation importance, PDP/ICE
+│     └─ metrics.py                       # Metrics + threshold tuning
+├─ requirements.txt
+├─ pyproject.toml
+├─ Dockerfile
+├─ README.md
+└─ .gitignore
 ```
 
 ---
 
-## Tech Stack
+## 🚀 Quickstart
 
-- **Programming Language**: Python 3.11
-- **Libraries**:
-  - Core: `numpy`, `pandas`, `mypy`, `FastAPI`, `Pydantic`
-  - Neural Network: Custom-built, no external frameworks
-  - Containerization: Docker
+### Option A — Docker (recommended for sharing)
+
+1) Put your artifacts in `./model/`:
+   - `model/model.pkl`
+   - `model/preprocessing.pkl`
+
+2) Build and run:
+```bash
+docker build -t heart-api .
+docker run --rm -p 8000:8000 -v "$PWD/model:/app/model:ro" heart-api
+```
+
+3) Open the docs: http://localhost:8000/docs  
+   (or: `curl http://localhost:8000/version`)
+
+> **Docker Compose**
+>
+> ```yaml
+> services:
+>   api:
+>     build: .
+>     image: heart-api
+>     ports:
+>       - "8000:8000"
+>     volumes:
+>       - ./model:/app/model:ro
+> ```
+> Run with: `docker compose up --build`
 
 ---
 
-**Pydantic** was used to validate input data in the FastAPI application. The `schemas.py` file ensures that all input values are of the correct type and within valid ranges. If invalid data is provided the API returns error messages.
+### Option B — Local (Python)
 
+Requirements are pinned for **Pydantic v1** compatibility (project uses `.dict()`):
 
-## Setup Instructions
-
-### 1. Clone the Repository
 ```bash
-git clone https://github.com/<ElenTerteryan>/nn-from-scratch.git
-cd nn-from-scratch
-```
-
-### 2. Create and Activate Virtual Environment
-```bash
-py -3.11 -m venv venv
-venv\Scripts\activate # for Windows
-```
-
-### 3. Install Dependencies
-```bash
+python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+export PYTHONPATH=$PWD/src:$PYTHONPATH                # Windows (PowerShell): $env:PYTHONPATH="$PWD/src;$env:PYTHONPATH"
+uvicorn src.api:app --reload --port 8000
 ```
 
-### 4. Train the Neural Network
-Run the training notebook located at `notebook/heart_disease_analysis.ipynb`. This will save the trained model and preprocessing artifacts.
+Place artifacts at `./model/` before hitting the API.
 
 ---
 
-## Usage
+## ⚙️ Model Artifacts
 
-### Start the FastAPI Application
-```bash
-uvicorn src.api:app --reload
-```
+Artifacts are loaded by `src/services/artifacts.py` (pickle only). Expected keys in `preprocessing.pkl`:
 
-### API Docs
-The FastAPI application availale at http://localhost:8000/docs.
+- `encoder` (or `final_encoder`) – optional categorical encoder with `.transform(df, cols)`
+- `std_scaler` (or `final_std_scaler`) – optional standard scaler for numeric cols
+- `mm_scaler` (or `final_mm_scaler`) – optional min‑max scaler for float cols
+- `cat_cols`, `num_cols`, `float_cols` – column lists
+- `feature_order` (optional) – final feature order expected by the model
+
+> The **ModelBundle** aligns columns and calls `model.forward(x)` to get positive‑class probabilities.
 
 ---
 
-## Run with Docker 
+## 🔌 API Reference
 
-```bash
-docker build -t heart-disease-app .
-docker run -p 8000:8000 heart-disease-app
+Base URL: `http://localhost:8000`  
+Interactive docs: `/docs` (Swagger), `/redoc` (ReDoc)
+
+### `GET /` — Health
+Returns `{ "version": "...", "status": "OK", "artifact_source": "pickle" }`
+
+### `GET /version`
+```json
+{ "app_version": "0.3", "artifact_source": "pickle" }
 ```
 
+### `GET /feature-map`
+Lists feature groups used by the bundle:
+```json
+{
+  "cat_cols": ["sex","cp","fbs","restecg","exang","slope"],
+  "num_cols": ["age","trestbps","chol","thalach"],
+  "float_cols": ["oldpeak"]
+}
+```
 
+### `POST /predict`
+Predict probabilities (and optional labels if `threshold` provided).
 
+- **Query**: `threshold` ∈ [0,1] (optional)
+- **Body**: `HeartDiseaseRequest` or `List[HeartDiseaseRequest]`
+
+`HeartDiseaseRequest` fields:
+```json
+{
+  "age": 57, "sex": 1, "cp": 0, "trestbps": 130, "chol": 250,
+  "fbs": 0, "restecg": 1, "thalach": 140, "exang": 1,
+  "oldpeak": 1.2, "slope": 2
+}
+```
+
+**Example**
+```bash
+curl -X POST "http://localhost:8000/predict?threshold=0.5" \
+  -H "Content-Type: application/json" -d '{"age":57,"sex":1,"cp":0,"trestbps":130,"chol":250,"fbs":0,"restecg":1,"thalach":140,"exang":1,"oldpeak":1.2,"slope":2}'
+```
+**Response**
+```json
+{ "predictions":[0.74], "labels":[1], "threshold":0.5 }
+```
+
+### `POST /metrics`
+Compute metrics on labeled rows.
+
+- **Body**: `List[LabeledHeartDiseaseRequest]` where each item = features + `"target": 0|1`
+
+**Returns**
+```json
+{
+  "threshold_used": 0.37,                    // tuned for F1
+  "metrics_at_default": { "accuracy": ..., "precision": ..., "recall": ..., "mcc": ... },
+  "metrics_at_optimal": { "accuracy": ..., "precision": ..., "recall": ..., "mcc": ... },
+  "auc_roc": 0.91,
+  "auc_pr": 0.88
+}
+```
+
+### `POST /explain/permutation`
+Permutation Feature Importance (global).
+
+**Body** (`PermutationRequest`):
+```json
+{
+  "baseline_thr": 0.5,
+  "n_repeats": 5,
+  "top_k": 10,
+  "random_seed": 42,
+  "data": [ { "<features>", "target": 0|1 }, ... ]
+}
+```
+
+**Response**
+```json
+{
+  "base_mcc": 0.42,
+  "columns": ["sex","cp", "..."],
+  "importances": [0.02, 0.00, "..."],
+  "top": [{"feature":"sex","importance":0.02}, "..."]
+}
+```
+
+### `POST /explain/pdp`
+Partial Dependence for a single feature (optionally with ICE curves).
+
+**Body** (`PDPRequest`):
+```json
+{
+  "feature": "age",
+  "grid": null,               // optional; auto-percentiles if not given
+  "grid_size": 20,
+  "ice": false,
+  "ice_count": 10,
+  "seed": 42,
+  "data": [ { "<features>" }, ... ]
+}
+```
+**Response**
+```json
+{
+  "feature": "age",
+  "grid": [52.0, 52.4, "..."],
+  "pdp": [0.49, 0.491, "..."],
+  "ice": null
+}
+```
+
+---
+
+## 🧠 From‑Scratch Model (overview)
+
+The model is defined in `src/nn_from_scratch.py`:
+
+- **Architecture**
+  - Dense(32) → ReLU → Dropout
+  - Dense(64) → ReLU → Dropout
+  - Dense(32) → ReLU → Dropout
+  - Dense(1)  → Sigmoid
+
+- **Training utilities**
+  - `train_val_test_split`, `TargetEncoder`, `StandardScaler`, `MinMaxScaler`
+  - `bce_loss` (+ gradient), `Adam` / `AdamW`, gradient clipping
+  - `ReduceLROnPlateau`, `EarlyStopping`, `train_model(...)`
+
+> The API itself does **not** train. Train offline, export artifacts, and serve.
+
+---
+
+## 🔧 Configuration
+
+- **Port / workers (Dockerfile defaults)**: port `8000`, workers `2`
+- **Change port** with Docker: map host port, e.g. `-p 8001:8000`
+- **Artifacts**: mount `./model` at `/app/model` (or bake them into the image)
+
+---
+
+## 🧪 Smoke Tests
+
+```bash
+curl http://localhost:8000/version
+curl http://localhost:8000/feature-map
+
+curl -X POST "http://localhost:8000/predict?threshold=0.5" \
+  -H "Content-Type: application/json" \
+  -d '{"age":57,"sex":1,"cp":0,"trestbps":130,"chol":250,"fbs":0,"restecg":1,"thalach":140,"exang":1,"oldpeak":1.2,"slope":2}'
+```
+
+---
+
+## 🐞 Troubleshooting
+
+- **`address already in use` on port 8000**  
+  Another process/container is using it. Stop it or map a different host port, e.g. `-p 8001:8000` (compose: `"8001:8000"`).
+
+- **`FileNotFoundError: Pickle artifacts not found`**  
+  Place `model.pkl` & `preprocessing.pkl` in `./model/` (mounted to `/app/model`).
+
+- **`ImportError: nn_from_scratch`**  
+  The image sets `PYTHONPATH=/app/src:/app`. For local dev, export `PYTHONPATH=$PWD/src:$PYTHONPATH`.
+
+- **Odd AUC/metrics with tiny payloads**  
+  Curves need enough points. Use larger evaluation data.
+
+---
+
+## 📄 License & Attribution
+
+- Add your preferred license in `LICENSE` (e.g., MIT).
+- If you use the UCI Heart Disease dataset or derivatives, include proper attribution in this section.
+
+---
+
+## 🙌 Acknowledgements
+
+Thanks to everyone who likes learning by building from scratch 🤝
