@@ -190,9 +190,13 @@ Permutation Feature Importance (global).
 ```json
 {
   "base_mcc": 0.42,
-  "columns": ["sex","cp", "..."],
-  "importances": [0.02, 0.00, "..."],
-  "top": [{"feature":"sex","importance":0.02}, "..."]
+  "columns": ["sex", "cp", "fbs", "restecg", "exang", "slope", "age", "trestbps", "chol", "thalach", "oldpeak"],
+  "importances": [0.02, 0.00, 0.01, 0.00, 0.00, 0.05, 0.03, 0.00, 0.00, 0.00, 0.00],
+  "top": [
+    { "feature": "slope", "importance": 0.05 },
+    { "feature": "age", "importance": 0.03 },
+    { "feature": "sex", "importance": 0.02 }
+  ]
 }
 ```
 
@@ -208,15 +212,18 @@ Partial Dependence for a single feature (optionally with ICE curves).
   "ice": false,
   "ice_count": 10,
   "seed": 42,
-  "data": [ { "<features>" }, ... ]
+  "data": [
+    { "age": 57, "sex": 1, "cp": 0, "trestbps": 130, "chol": 250, "fbs": 0, "restecg": 1, "thalach": 140, "exang": 1, "oldpeak": 1.2, "slope": 2 },
+    { "age": 52, "sex": 0, "cp": 2, "trestbps": 120, "chol": 210, "fbs": 0, "restecg": 0, "thalach": 160, "exang": 0, "oldpeak": 0.4, "slope": 1 }
+  ]
 }
 ```
 **Response**
 ```json
 {
   "feature": "age",
-  "grid": [52.0, 52.4, "..."],
-  "pdp": [0.49, 0.491, "..."],
+  "grid": [52.0, 52.4, 52.8, 53.2],
+  "pdp": [0.489, 0.491, 0.494, 0.496],
   "ice": null
 }
 ```
