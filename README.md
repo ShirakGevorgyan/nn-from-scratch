@@ -280,8 +280,17 @@ curl -X POST "http://localhost:8000/predict?threshold=0.5" \
 
 ## 📄 License & Attribution
 
-- Add your preferred license in `LICENSE` (e.g., MIT).
-- If you use the UCI Heart Disease dataset or derivatives, include proper attribution in this section.
+This project is released under the MIT License (see `LICENSE`).
+
+### Dataset Attribution
+This project uses (or derives from) the **UCI Machine Learning Repository – Heart Disease** dataset (commonly the *Cleveland* subset).
+
+Please cite:
+- Dua, D. & Graff, C. (2019). UCI Machine Learning Repository. University of California, Irvine, School of Information and Computer Sciences. https://archive.ics.uci.edu
+- Original dataset contributors include R. Detrano and collaborators.
+
+> Data is for research/education only. This software is **not** for clinical use.
+
 
 ---
 
